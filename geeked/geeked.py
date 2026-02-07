@@ -39,25 +39,30 @@ class Geeked:
         parsed = json.loads(response.split(f"{self.callback}(")[1][:-1])
         return parsed.get("data", parsed)
 
-    async def load_captcha(self, payload=None, process_token=None):
-        params = {
-            "captcha_id": self.captcha_id,
-            "challenge": self.challenge,
-            "client_type": "web",
-            "risk_type": self.risk_type,
-            "lang": "eng",
-            "callback": self.callback,
-        }
+    async def load_captcha(self, bitmart: bool, payload=None, process_token=None):
+        while True:
+            params = {
+                "captcha_id": self.captcha_id,
+                "challenge": self.challenge,
+                "client_type": "web",
+                "risk_type": self.risk_type,
+                "lang": "eng",
+                "callback": self.callback,
+            }
 
-        if payload:
-            params["payload"] = payload
-            params["process_token"] = process_token
-            params["lot_number"] = self.lot_number
-            params["pt"] = "1"
-            params["payload_protocol"] = "1"
+            if payload:
+                params["payload"] = payload
+                params["process_token"] = process_token
+                params["lot_number"] = self.lot_number
+                params["pt"] = "1"
+                params["payload_protocol"] = "1"
 
-        res = await self.session.get("/load", params=params)
-        return self.format_response(res.text)
+            res = await self.session.get("/load", params=params)
+            res = self.format_response(res.text)
+            if bitmart and res["captcha_type"] == "icon":
+                print("Mode bitmart and captcha_type is icon, skipping")
+                continue
+            return res
 
     async def submit_captcha(self, data: dict) -> str:
         self.callback = Geeked.random()
@@ -102,21 +107,23 @@ class Geeked:
 
         return res
 
-    async def solve(self) -> str:
-        initial_data = await self.load_captcha()
+    async def solve(self, bitmart: bool = False) -> str:
+        initial_data = await self.load_captcha(bitmart=bitmart)
         self.lot_number = initial_data["lot_number"]
 
         dummy_w = Signer.generate_dummy_w(initial_data, self.captcha_id)
         failed_data = await self.initial_verify(initial_data, dummy_w)
 
         reload_data = await self.load_captcha(
-            payload=failed_data["payload"], process_token=failed_data["process_token"]
+            payload=failed_data["payload"],
+            process_token=failed_data["process_token"],
+            bitmart=bitmart,
         )
 
         seccode = await self.submit_captcha(reload_data)
         return seccode
 
-    async def solve_from_load_data(self, load_data: str) -> str:
+    async def solve_from_load_data(self, load_data: str, bitmart: bool = False) -> str:
         # Parse JSONP with any callback name (browser may use different callback)
         match = json.loads(load_data.split("(", 1)[1].rsplit(")", 1)[0])
         parsed_load_data = match["data"]
@@ -151,7 +158,9 @@ class Geeked:
 
         # If failed, continue with reload
         reload_data = await self.load_captcha(
-            payload=verify_response["payload"], process_token=verify_response["process_token"]
+            payload=verify_response["payload"],
+            process_token=verify_response["process_token"],
+            bitmart=bitmart,
         )
 
         seccode = await self.submit_captcha(reload_data)
